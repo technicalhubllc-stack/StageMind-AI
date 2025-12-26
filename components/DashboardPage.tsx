@@ -1,59 +1,38 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Monitor, 
   Activity, 
   Ticket, 
   Tags, 
-  Database, 
   Users, 
   User, 
-  Target, 
   Rocket, 
   TrendingUp,
   MonitorPlay,
   Bell,
   Search,
   Zap,
-  ChevronDown,
   LogOut,
-  Settings,
   Star,
   ArrowUpRight,
   ArrowDownRight,
-  Info,
-  AlertTriangle,
   Maximize2,
   RefreshCw,
-  LayoutDashboard,
-  CheckCircle2,
-  X,
-  Plus,
-  MoreVertical,
   Loader2,
-  History,
-  ShieldCheck,
   DollarSign,
-  PieChart as LucidePieChart
+  Link as LinkIcon,
+  Globe,
+  CheckCircle2,
+  AlertCircle,
+  X,
+  History,
+  // Added ShieldCheck to resolve 'Cannot find name' error
+  ShieldCheck
 } from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  Cell,
-  LineChart,
-  Line,
-  PieChart as RePieChart,
-  Pie
-} from 'recharts';
 import { useToast } from '../App';
-// Import DashboardPreview to resolve the missing component reference
 import DashboardPreview from './DashboardPreview';
+import { fetchTicketingData, TicketingData } from '../ticketing';
 
 interface DashboardPageProps {
   onLogout: () => void;
@@ -85,30 +64,6 @@ interface ClickedSeatInfo {
   col: number;
 }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-[#0F172A]/95 border border-white/10 p-6 rounded-[32px] shadow-2xl backdrop-blur-3xl text-right min-w-[200px]">
-        <p className="text-[10px] font-black text-gray-500 mb-4 uppercase tracking-[0.3em] font-plex">{label}</p>
-        <div className="space-y-3">
-          {payload.map((entry: any, index: number) => (
-            <div key={index} className="flex items-center justify-between gap-8 flex-row-reverse">
-              <div className="flex items-center gap-3 flex-row-reverse">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color || entry.fill }} />
-                <span className="text-xs font-black text-gray-300 font-plex">{entry.name}</span>
-              </div>
-              <span className="text-sm font-black text-white tracking-tight font-plex">
-                {entry.value}%
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  return null;
-};
-
 const KPICard: React.FC<{ 
   label: string; 
   val: string; 
@@ -118,7 +73,8 @@ const KPICard: React.FC<{
   themeColor: 'teal' | 'gold' | 'blue' | 'purple';
   data: { v: number }[];
   highlight?: boolean;
-}> = ({ label, val, target, change, icon, themeColor, data, highlight }) => {
+  source?: string;
+}> = ({ label, val, target, change, icon, themeColor, data, highlight, source }) => {
   const themes = {
     teal: { text: 'text-electric-teal', bg: 'bg-electric-teal/10', border: 'border-electric-teal/20', accent: '#64FFDA' },
     gold: { text: 'text-amber-gold', bg: 'bg-amber-gold/10', border: 'border-amber-gold/20', accent: '#FFB400' },
@@ -139,7 +95,10 @@ const KPICard: React.FC<{
       </div>
       <div className="flex items-start justify-between mb-8 flex-row-reverse relative z-10">
         <div className={`w-14 h-14 rounded-[22px] flex items-center justify-center transition-all group-hover:scale-110 border shadow-2xl ${theme.bg} ${theme.text} ${theme.border}`}>{icon}</div>
-        <div className={`px-3 py-1 rounded-full border border-white/5 font-black text-[10px] font-plex flex items-center gap-2 ${isUp ? 'text-green-400 bg-green-500/5' : 'text-blue-400 bg-blue-500/5'}`}>{isUp ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}{change}</div>
+        <div className="flex flex-col items-end gap-1">
+          <div className={`px-3 py-1 rounded-full border border-white/5 font-black text-[10px] font-plex flex items-center gap-2 ${isUp ? 'text-green-400 bg-green-500/5' : 'text-blue-400 bg-blue-500/5'}`}>{isUp ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}{change}</div>
+          {source && <span className="text-[8px] text-gray-500 font-bold font-plex flex items-center gap-1 uppercase tracking-tighter"><Globe className="w-2 h-2" /> {source}</span>}
+        </div>
       </div>
       <div className="relative z-10 mb-6">
         <p className="text-gray-500 font-black text-[10px] uppercase tracking-[0.3em] mb-2 font-plex">{label}</p>
@@ -165,7 +124,8 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onLogout }) => {
   const [activeTab, setActiveTab] = useState('الرئيسية');
   const [heatmapMode, setHeatmapMode] = useState<'demand' | 'revenue'>('demand');
   const [clickedSeat, setClickedSeat] = useState<ClickedSeatInfo | null>(null);
-  const [isDynamicPricingActive, setIsDynamicPricingActive] = useState(false);
+  const [integrationData, setIntegrationData] = useState<TicketingData[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
   const { addToast } = useToast();
 
   const menuItems = [
@@ -175,6 +135,23 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onLogout }) => {
     { label: 'التسعير الديناميكي', icon: <Rocket className="w-5 h-5" /> },
     { label: 'مركز الأرباح', icon: <TrendingUp className="w-5 h-5" /> },
   ];
+
+  const syncData = async () => {
+    setIsSyncing(true);
+    try {
+      const data = await fetchTicketingData();
+      setIntegrationData(data);
+      addToast('تمت مزامنة بيانات Ticketmaster و Eventbrite بنجاح.', 'success');
+    } catch (err) {
+      addToast('فشل الاتصال بأنظمة التذاكر الخارجية.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    syncData();
+  }, []);
 
   const generateSeats = (count: number, baseHeat: number, zoneId: string) => {
     return Array.from({ length: count }).map((_, i) => {
@@ -299,6 +276,28 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onLogout }) => {
           ))}
         </nav>
 
+        {/* System Health / Integrations Mini Widget */}
+        <div className="mt-8 p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
+           <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest text-right">حالة الربط البرمجي</p>
+           {integrationData.map((integration, idx) => (
+             <div key={idx} className="flex items-center justify-between flex-row-reverse">
+                <div className="flex items-center gap-2 flex-row-reverse">
+                   <div className={`w-1.5 h-1.5 rounded-full ${integration.status === 'connected' ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
+                   <span className="text-[10px] font-black text-gray-400 font-plex">{integration.platform}</span>
+                </div>
+                <span className="text-[9px] text-gray-600 font-bold">{integration.lastSync}</span>
+             </div>
+           ))}
+           <button 
+            onClick={syncData} 
+            disabled={isSyncing}
+            className="w-full mt-2 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-[9px] font-black text-electric-teal flex items-center justify-center gap-2 transition-all"
+           >
+             {isSyncing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+             مزامنة الأنظمة
+           </button>
+        </div>
+
         <div className="pt-8 border-t border-white/5">
           <button onClick={onLogout} className="w-full flex items-center justify-end gap-4 p-4 text-gray-500 hover:text-red-400 transition-colors">
             <span className="font-bold">تسجيل الخروج</span>
@@ -312,8 +311,10 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onLogout }) => {
         <header className="p-8 border-b border-white/5 flex items-center justify-between sticky top-0 bg-[#0A192F]/80 backdrop-blur-3xl z-40">
            <div className="flex items-center gap-6">
               <div className="flex items-center gap-4 bg-white/5 px-4 py-2 rounded-2xl border border-white/10">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">محرك التحليلات: نشط</span>
+                <div className={`w-2 h-2 ${isSyncing ? 'bg-amber-gold animate-bounce' : 'bg-green-500 animate-pulse'} rounded-full`} />
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  {isSyncing ? 'جاري استيراد مبيعات Ticketmaster...' : 'محرك التحليلات: نشط'}
+                </span>
               </div>
               <button className="p-3 bg-white/5 rounded-2xl border border-white/10 text-gray-400 hover:text-white transition-colors relative">
                 <Bell className="w-5 h-5" />
@@ -347,11 +348,73 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onLogout }) => {
           {activeTab === 'الرئيسية' ? (
             <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
-                <KPICard label="مبيعات اليوم" val="$24,842" target="$22,000" change="+12.4%" icon={<DollarSign />} themeColor="teal" data={kpiData} highlight />
+                <KPICard label="مبيعات مجمعة" val={`$${(integrationData.reduce((acc, curr) => acc + curr.sales, 0)).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} target="$22,000" change="+12.4%" icon={<DollarSign />} themeColor="teal" data={kpiData} highlight source="Multi-Channel Sync" />
                 <KPICard label="الحضور النشط" val="2,842" target="3,000" change="+8.1%" icon={<Users />} themeColor="blue" data={kpiData} />
-                <KPICard label="متوسط سعر التذكرة" val="$64.50" target="$60.00" change="+4.2%" icon={<Tags />} themeColor="purple" data={kpiData} />
+                <KPICard label="أداء Ticketmaster" val={`$${(integrationData.find(d => d.platform === 'Ticketmaster')?.sales || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} target="$10,000" change="+15.2%" icon={<LinkIcon />} themeColor="purple" data={kpiData} source="Live API Feed" />
                 <KPICard label="معدل الإشغال" val="94.2%" target="90%" change="+2.4%" icon={<MonitorPlay />} themeColor="gold" data={kpiData} />
               </div>
+
+              {/* Integration Status Panel */}
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
+                 <div className="xl:col-span-2 glass-card p-10 rounded-[56px] border border-white/5">
+                    <div className="flex items-center justify-between mb-10 flex-row-reverse">
+                       <h3 className="text-2xl font-black text-white">تحليل تدفق مبيعات القنوات</h3>
+                       <div className="flex items-center gap-3">
+                         <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-electric-teal" /><span className="text-[10px] text-gray-500 font-black">Ticketmaster</span></div>
+                         <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-amber-gold" /><span className="text-[10px] text-gray-500 font-black">Eventbrite</span></div>
+                         <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-[10px] text-gray-500 font-black">Direct Sales</span></div>
+                       </div>
+                    </div>
+                    <div className="h-64 opacity-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                         <AreaChart data={Array.from({ length: 12 }).map((_, i) => ({ 
+                           time: `${i + 9}:00`, 
+                           tm: 400 + Math.random() * 200, 
+                           eb: 300 + Math.random() * 150,
+                           dr: 500 + Math.random() * 300
+                         }))}>
+                           <defs>
+                             <linearGradient id="colorTm" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#64FFDA" stopOpacity={0.3}/><stop offset="95%" stopColor="#64FFDA" stopOpacity={0}/></linearGradient>
+                           </defs>
+                           <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} opacity={0.1} />
+                           <XAxis dataKey="time" stroke="#475569" fontSize={10} fontWeight="900" reversed={true} />
+                           <Tooltip contentStyle={{ backgroundColor: '#0F172A', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px' }} />
+                           <Area type="monotone" dataKey="tm" stroke="#64FFDA" fill="url(#colorTm)" strokeWidth={3} />
+                           <Area type="monotone" dataKey="eb" stroke="#FFB400" fill="transparent" strokeWidth={2} strokeDasharray="5 5" />
+                           <Area type="monotone" dataKey="dr" stroke="#3B82F6" fill="transparent" strokeWidth={2} />
+                         </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                 </div>
+
+                 <div className="glass-card p-10 rounded-[56px] border border-white/5 flex flex-col justify-between">
+                    <div>
+                      <h3 className="text-xl font-black text-white mb-6 text-right">أمان المزامنة والربط</h3>
+                      <div className="space-y-6">
+                         <div className="flex items-center gap-4 flex-row-reverse">
+                            <div className="p-3 bg-green-500/10 rounded-2xl border border-green-500/20 text-green-500"><ShieldCheck className="w-6 h-6" /></div>
+                            <div className="text-right">
+                               <p className="text-xs font-black text-white">تشفير API Endpoints</p>
+                               <p className="text-[10px] text-gray-500 font-bold">AES-256 Symmetric Encryption</p>
+                            </div>
+                         </div>
+                         <div className="flex items-center gap-4 flex-row-reverse">
+                            <div className="p-3 bg-blue-500/10 rounded-2xl border border-blue-500/20 text-blue-500"><Globe className="w-6 h-6" /></div>
+                            <div className="text-right">
+                               <p className="text-xs font-black text-white">استجابة السيرفر</p>
+                               <p className="text-[10px] text-gray-500 font-bold">142ms Latency (Ticketmaster API)</p>
+                            </div>
+                         </div>
+                      </div>
+                    </div>
+                    <div className="pt-8 border-t border-white/5 text-right">
+                       <p className="text-[9px] text-gray-600 font-black uppercase tracking-widest leading-relaxed">
+                          يتم جلب البيانات تلقائياً كل 5 دقائق لضمان دقة التسعير الديناميكي.
+                       </p>
+                    </div>
+                 </div>
+              </div>
+
               <DashboardPreview />
             </div>
           ) : activeTab === 'تفاعل الجمهور' ? (
